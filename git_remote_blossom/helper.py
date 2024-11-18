@@ -21,19 +21,19 @@ from git_remote_blossom.gitremote import GitRemote, GitRemoteError
 
 
 class Helper(object):
-    def __init__(self, remote_name, sk, path, concurrency=CONCURRENCY):
-        self._remote_name = remote_name
+    def __init__(self, blossom, cmd, cmd_args, sk, concurrency=CONCURRENCY):
+        self._blossom = blossom
+        self._cmd = cmd
+        self._cmd_args = cmd_args
         self._sk = sk
-        self._path = path
         self._concurrency = concurrency
-        self._verbosity = Level.INFO  # default verbosity
+        self._verbosity = Level.DEBUG  # default verbosity
         self._refs = {}  # {refname: (sha, blossom_key)}
         self._pushed = {}  # Same, but just pushed (?).
         self._first_push = False
         self._remote = None
         self._semaphore = asyncio.Semaphore(self._concurrency)
         self._git_dir = os.environ["GIT_DIR"]
-        self._blossom_server = git.get_config_value("nostr.blossom")
         self._objectformat = git.get_config_value("extensions.objectformat") or "sha1"
         self._have_blossom_key = dict()
         self._blossom_keys = {}
@@ -76,8 +76,7 @@ class Helper(object):
     async def connect(self):
         """Find repo announcement event and connect to relay(s)."""
         try:
-            self._remote = GitRemote(self._path, self._remote_name, self._sk, self._verbosity)
-            await self._remote.connect()
+            self._remote = GitRemote(self._sk, self._verbosity)
         except GitRemoteError as e:
             self._trace(str(e), Level.ERROR)
             return False
@@ -88,150 +87,43 @@ class Helper(object):
         """
         Run the helper following the git remote helper communication protocol.
         """
-        while True:
-            line = readline()
-            if line:
-                self._trace(f'< {line}')
-
-            if line == 'capabilities':
-                self._write('option')
-                self._write('push')
-                self._write('fetch')
-                self._write()
-            elif line.startswith('option'):
-                self._do_option(line)
-            elif line.startswith('list'):
-                await self._do_list(line)
-            elif line.startswith('push'):
-                await self._do_push(line)
-            elif line.startswith('fetch'):
-                await self._do_fetch(line)
-            elif line == '':
-                break
-            else:
-                self._fatal('unsupported operation: %s' % line)
-
-    def _do_option(self, line):
-        """
-        Handle the option command.
-        """
-        if line.startswith('option verbosity'):
-            self._verbosity = int(line[len('option verbosity '):])
-            self._write('ok')
+        if self._cmd == 'push':
+            await self._do_push(self._cmd_args)
+        elif self._cmd == 'fetch':
+            await self._do_fetch(self._cmd_args)
         else:
-            self._write('unsupported')
+            self._fatal('unsupported operation: %s' % self._cmd)
 
-    async def _do_list(self, line):
-        """
-        Handle the list command.
-        """
-        for_push = 'for-push' in line
-
-        first_push, self._refs = await self._remote.get_refs(for_push=for_push)
-        if (first_push, self._refs) == (None, {}):
-            # if we're pushing, it's okay if nothing exists beforehand,
-            # but it's good to notify the user just in case
-            self._trace('repository is empty', Level.INFO)
-
-        if first_push:
-            self._trace('First push to remote repository.', Level.INFO)
-            self._first_push = True
-
-        for refname, refval in self._refs.items():
-            self._trace(f"remote ref: {refval[0]} {refname}")
-
-        if self._objectformat == "sha256":
-            self._write(":object-format sha256")
-        else:
-            assert self._objectformat == "sha1"
-
-        self._trace(f"Git repository object format is {self._objectformat}.")
-
-        for refname, sha in self._refs.items():
-            self._write('%s %s' % (sha[0], refname))
-
-        if not for_push:
-            head = await self._remote.read_symbolic_ref('HEAD')
-            if head:
-                self._trace(f'remote HEAD: {head}')
-                self._write(f'@{head} HEAD')
-            else:
-                self._trace('no default branch on remote', Level.INFO)
-
-        for sha, blossom_key in self._refs.values():
-            self._trace(f"Set blossom key of {sha} to {blossom_key} in memory.")
-            self._blossom_keys[sha] = blossom_key
-
-        self._write()
-
-    async def _do_push(self, line):
+    async def _do_push(self, args):
         """
         Handle the push command.
         """
-        remote_head = None
-        while True:
-            src, dst = line.split(' ')[1].split(':')
-            if src == '':
-                self._delete(dst)
-            else:
-                await self._push(src, dst)
-                if self._first_push:
-                    if not remote_head or src == git.symbolic_ref('HEAD'):
-                        remote_head = dst
-            line = readline()
-            if line == '':
-                if self._first_push:
-                    self._first_push = False
-                    err = await self._remote.write_symbolic_ref('HEAD', remote_head)
-                    if err:
-                        self._trace(f'failed to set default branch on remote: {err}', Level.INFO)
-                break
-            self._trace(f'< {line}')
-        self._write()
+        for sha in args:
+            await self._push(sha)
 
-    async def _do_fetch(self, line):
+    async def _do_fetch(self, args):
         """
         Handle the fetch command.
         """
-        while True:
-            _, sha, value = line.split(' ')
-            await self._fetch(sha)
-            line = readline()
-            if line == '':
-                break
-            self._trace(f"< {line}")
-        self._write()
+        sha, blossom_key = args  #WE_ARE_HERE: need a mechanism to accept multiple tips
 
-    def _delete(self, ref):
-        """
-        Delete the ref from the remote.
-        """
-        raise Exception("WE_ARE_HERE: Not implemented.")
-        head = self.read_symbolic_ref('HEAD')
-        if head and ref == head[1]:
-            self._write('error %s refusing to delete the current branch: %s' % (ref, head))
-            return
+        self._blossom_keys[sha] = blossom_key
 
-        self._refs.pop(ref, None)  # discard
-        self._pushed.pop(ref, None)  # discard
-        self._write('ok %s' % ref)
+        print(f"< fetch {sha} blossom:{blossom_key}")
+        await self._fetch(sha)
+        #WE_ARE_HERE: It seems not set .git/blossom/sh/a..... to blossom key.
 
-    async def _push(self, src, dst):
-        """Push local src to remote dst."""
-        if self._remote._remote_pubkey != self._sk.public_key_hex():
-            error("Only the repository owner can push." +\
-                " Push by contributor is not yet supported.")
+    async def _push(self, tip):
+        """Push commit to blossom."""
+        present = []  #[sha for (sha, blossom_key) in self._refs.values()]
+        #WE_ARE_HERE: IT WILL PUSH ALL OBJS!
+        # We should test if exists on blossom server first. If it does, stop.
 
-        force = False
-        if src.startswith('+'):
-            src = src[1:]
-            force = True
-
-        present = [sha for (sha, blossom_key) in self._refs.values()]
         # present.extend([sha for (sha, name) in self._pushed])
         # Store all referenced git objects in blossom, then update ref on the relays.
-        self._trace(f"Present refs: {', '.join(present)}")
-        objects = git.list_objects(src, present)
+        # self._trace(f"Present refs: {', '.join(present)}")
+
+        objects = git.list_objects(tip, present)
         self._trace(f"{len(objects)} objects to push: {', '.join(objects)}")
 
         # Initialize progressbar.
@@ -262,22 +154,7 @@ class Helper(object):
             else:
                 self._fatal(f'{str(e)} while storing objects (run with -v for traceback)\n')
 
-        sha = git.ref_value(src)
-        self._trace(f"Upload finished. HEAD is [{sha}].")
-
-        try:
-            error = await self._remote.write_ref(sha, dst, force)
-        except Exception:
-            if self.verbosity >= Level.DEBUG:
-                raise  # re-raise exception so it prints out a stack trace
-            else:
-                self._fatal(f"exception while writing [{dst}]")
-
-        if error is None:
-            self._write('ok %s' % dst)
-            self._pushed[dst] = sha
-        else:
-            self._write('error %s %s' % (dst, error))
+        self._trace(f"Upload finished. HEAD is [{tip}].")
 
     async def handle_tasks(self, tasks):
         self._trace(f"Waiting for {len(tasks)} tasks.")
@@ -337,7 +214,7 @@ class Helper(object):
         # Upload object to blossom.
         async with aiohttp.ClientSession() as sess:
             async with sess.put(
-                    f"{self._blossom_server}/upload",
+                    f"{self._blossom}/upload",
                     data=data,
                     headers={
                         "Authorization": f"Nostr {b64_auth}",
@@ -400,7 +277,7 @@ class Helper(object):
 
         self._trace(f"fetching {blossom_key}")
         async with aiohttp.ClientSession() as sess:
-            async with sess.get(f"{self._blossom_server}/{blossom_key}") as resp:
+            async with sess.get(f"{self._blossom}/{blossom_key}") as resp:
                 if resp.status != 200:
                     txt = await resp.text()
                     #WE_ARE_HERE: error handling

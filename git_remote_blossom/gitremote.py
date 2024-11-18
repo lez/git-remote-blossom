@@ -20,19 +20,13 @@ class GitRemoteError(Exception):
 
 
 class GitRemote:
-    def __init__(self, path, remote_name, sk, verbosity):
-        self._path = path
+    def __init__(self, sk, verbosity):
         self._sk = sk
         self._state_event = None
-        self._remote_npub, self._repo = path.split("/")
-        self._remote_pubkey = Keys(pub_k=self._remote_npub).public_key_hex()
+        self._remote_pubkey = sk.public_key_hex()  # for push
         self._git_dir = os.environ['GIT_DIR']
-        self._remote_name = remote_name
         self._verbosity = verbosity
-        self._relay = git.get_config_value("nostr.relay")
         self._objectformat = git.get_config_value("extensions.objectformat") or "sha1"
-        if not self._relay:
-            raise Exception("Relay must be set via 'git config --global --add nostr.relay wss://relay.for.repos'")
 
     async def connect(self):
         #WE_ARE_HERE: Find k:30617 repo announcement event on self._relay.

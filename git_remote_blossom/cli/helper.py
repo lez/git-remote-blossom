@@ -18,18 +18,20 @@ async def _main():
         "command",
         help="'fetch' or 'push'")
     parser.add_argument(
-        "command_arg", nargs="+", metavar="command_arg",
+        "command_arg", nargs="+",
         help="One or more arguments for the 'fetch' or 'push'")
 
     args = parser.parse_args()
+    print(args)
 
     # configure system
     stdout_to_binary()
 
-    remote_name = sys.argv[1]
-    url = sys.argv[2]
-    # print("remote {} {}".format(remote_name, url), file=sys.stderr)
-    helper = await get_helper(remote_name, url)
+    blossom = args.blossom_server
+    cmd = args.command
+    cmd_args = args.command_arg
+
+    helper = await get_helper(blossom, cmd, cmd_args)
     try:
         await helper.run()
     except Exception:

@@ -39,7 +39,7 @@ setup(
     url='https://githab.com/lez/git-remote-blossom',
 
     author='Lez',
-    author_email='lez@nostr.hu',
+    author_email='lez@nostr.hu',  # NIP-05, not email.
 
     license='MIT',
 
