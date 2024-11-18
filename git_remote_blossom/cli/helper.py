@@ -1,5 +1,6 @@
 import sys
 import asyncio
+import argparse
 
 from git_remote_blossom.util import Level, stdout_to_binary
 from git_remote_blossom.cli.common import error, get_helper
@@ -7,8 +8,21 @@ from git_remote_blossom.cli.common import error, get_helper
 
 async def _main():
     """
-    Main entry point for git-remote-nostr Git remote helper.
+    Main entry point for git-remote-blossom Git remote helper.
     """
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "blossom_server",
+        help="Full URL of a blossom server, e.g. https://blossom.nos.tr:3000")
+    parser.add_argument(
+        "command",
+        help="'fetch' or 'push'")
+    parser.add_argument(
+        "command_arg", nargs="+", metavar="command_arg",
+        help="One or more arguments for the 'fetch' or 'push'")
+
+    args = parser.parse_args()
+
     # configure system
     stdout_to_binary()
 
